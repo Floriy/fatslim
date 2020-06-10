@@ -70,6 +70,14 @@ cdef class Aggregate:
     cdef readonly real thickness_avg
     cdef readonly real thickness_min
     cdef readonly real thickness_max
+    
+    # Order parameter-related
+    cdef real[:] order_values
+    cdef readonly real order_min
+    cdef readonly real order_max
+    cdef readonly real order
+    cdef list order_by_types
+    cdef readonly real order_avg
 
     # Analysis methods
     cdef void refresh_cache(self) nogil
@@ -80,6 +88,8 @@ cdef class Aggregate:
     cdef real fix_apl(self, fsl_int index, real *tmp_apl, bint onlyfix=*) nogil
     cdef void compute_thickness(self, Aggregate other, real interleaflet_cutoff=*, bint force=*) nogil except*
     cdef real fix_thickness(self, fsl_int index, real *tmp_thickness, bint onlyfix=*) nogil
+    # Order parameter
+    cdef void compute_order(self, rvec main_axis, bint force=*) nogil except *
 
 
 cdef class Membrane:
@@ -94,7 +104,13 @@ cdef class Membrane:
 
     # APL related
     cdef real apl
+    
+    # Order parameter related
+    cdef real order
 
     # Analysis methods
     cdef void fast_compute_thickness(self, real interleaflet_cutoff=*, bint force=*) nogil except*
     cdef void fast_compute_apl(self, real cutoff=*, real area_limit=*, bint force=*) nogil except*
+    # Order parameter
+    cdef void fast_compute_order(self, real main_axis_xx=*, real main_axis_yy=*,real main_axis_zz=*,
+                            bint force=*) nogil except *

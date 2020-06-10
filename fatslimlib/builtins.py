@@ -483,6 +483,121 @@ class CmdApl(MembraneAnalysisCommand):
     _help = "Retrieves area per lipid"
     _property_classes = [PropertyAPL, PropertyArea]
 
+## Order parameter ##
+class PropertyOrder(MembraneProperty):
+    _fullname = "order parameter"
+    _shortname = "order"
+    _units = ""
+    _groupable_by_type = True
+
+    def fill_parsers(self, parser_analysis, parser_input, parser_output):
+        super(PropertyOrder, self).fill_parsers(parser_analysis, parser_input, parser_output)
+
+        parser_analysis.add_argument("--temp-cutoff",
+                                    dest="temp_cutoff", default=0.0, type=float,
+                                    help="Temporary cutoff for compatibility" )
+        
+        parser_analysis.add_argument("--main-axis",
+                                    dest="main_axis", default=[0,0,1], type=float,
+                                    help="Layer main axis used to define the molecular-axis "
+                                        "angle e.g 0 0 1 (Z-axis)", nargs=3)
+    
+    
+    def get_values(self, membrane):
+        mem_val, l1_val_dict, l2_val_dict = membrane.get_order(
+            main_axis_xx=self.parent.namespace.main_axis[0],
+            main_axis_yy=self.parent.namespace.main_axis[1],
+            main_axis_zz=self.parent.namespace.main_axis[2],
+            by_type=self.needs_grouping,
+            only_average=True,
+            force=False)
+
+        if self.needs_grouping:
+            mem_val_by_type = {}
+            mem_val = [0.0, 0]
+            l1_val = [0.0, 0]
+            l2_val = [0.0, 0]
+
+            for key, val in l1_val_dict.items():
+                mem_val[0] += val[0] * val[1]
+                mem_val[1] += val[0]
+
+                l1_val[0] += val[0] * val[1]
+                l1_val[1] += val[0]
+
+                try:
+                    self.leaflet1_avg_values_by_type[key][self.parent.processing_index] = val[1]
+                except KeyError:
+                    self.leaflet1_avg_values_by_type[key] = np.zeros(len(self.membrane_avg_values))
+                    self.leaflet1_avg_values_by_type[key][self.parent.processing_index] = val[1]
+
+                mem_val_by_type[key] = [val[1] * val[0], val[0]]
+
+            for key, val in l2_val_dict.items():
+                mem_val[0] += val[0] * val[1]
+                mem_val[1] += val[0]
+
+                l2_val[0] += val[0] * val[1]
+                l2_val[1] += val[0]
+
+                try:
+                    self.leaflet2_avg_values_by_type[key][self.parent.processing_index] = val[1]
+                except KeyError:
+                    self.leaflet2_avg_values_by_type[key] = np.zeros(len(self.membrane_avg_values))
+                    self.leaflet2_avg_values_by_type[key][self.parent.processing_index] = val[1]
+
+                try:
+                    mem_val_by_type[key][0] += val[1] * val[0]
+                    mem_val_by_type[key][1] += val[0]
+                except KeyError:  # pragma: no cover
+                    mem_val_by_type[key] = [val[1] * val[0], val[0]]
+
+            for key, val in mem_val_by_type.items():
+                val = float(val[0]) / val[1]
+
+                try:
+                    self.membrane_avg_values_by_type[key][self.parent.processing_index] = val
+                except KeyError:
+                    self.membrane_avg_values_by_type[key] = np.zeros(len(self.membrane_avg_values))
+                    self.membrane_avg_values_by_type[key][self.parent.processing_index] = val
+
+            mem_val = float(mem_val[0]) / mem_val[1]
+            l1_val = float(l1_val[0]) / l1_val[1]
+            l2_val = float(l2_val[0]) / l2_val[1]
+
+            self.membrane_avg_values[self.parent.processing_index] = mem_val
+            self.leaflet1_avg_values[self.parent.processing_index] = l1_val
+            self.leaflet2_avg_values[self.parent.processing_index] = l2_val
+
+        else:
+            l1_val = l1_val_dict[0]
+            l2_val = l2_val_dict[0]
+
+            self.membrane_avg_values[self.parent.processing_index] = mem_val
+            self.leaflet1_avg_values[self.parent.processing_index] = l1_val
+            self.leaflet2_avg_values[self.parent.processing_index] = l2_val
+
+        return mem_val, l1_val, l2_val
+    
+    def get_raw_values(self, membrane):
+        
+        mem_val, l1_val, l2_val = membrane.get_order(main_axis_xx=self.parent.namespace.main_axis[0],
+                                                     main_axis_yy=self.parent.namespace.main_axis[1],
+                                                     main_axis_zz=self.parent.namespace.main_axis[2],
+                                                     by_type=self.needs_grouping,
+                                                     only_average=False,
+                                                     force=False)
+
+        return l1_val, l2_val
+
+
+class CmdOrder(MembraneAnalysisCommand):
+    _name = "order"
+    _help = "Retrieves bilayer order parameter"
+    _property_classes = [PropertyOrder]
+
+## Order parameter ##
+
 
 class CmdBenchmark(AnalyticalCommand):
     _name = "benchmark"

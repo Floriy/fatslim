@@ -826,12 +826,18 @@ class MembraneProperty(object):
         with open(csv_file, "w") as fp:
             writer = csv.writer(fp)
             writer.writerow(['resid', 'leaflet',
-                             'X coords', 'Y coords', 'Z coords',
-                             '%s' % self.fullname.capitalize()])
+                            'X coords', 'Y coords', 'Z coords',
+                            'X directions', 'Y directions', 'Z directions',
+                            'X normals', 'Y normals', 'Z normals',
+                            '%s' % self.fullname.capitalize()])
 
             for i, raw_values in enumerate(self.get_raw_values(membrane)):
                 resids = membrane[i].resids
                 coords = membrane[i].coords
+                # Supplementary lines to retrieve membrane 
+                # lipid directions and normals
+                directions = membrane[i].directions
+                normals = membrane[i].normals
                 if i == 0:
                     leaflet_type = self.parent.leaflet1_type
                 else:
@@ -839,13 +845,19 @@ class MembraneProperty(object):
 
                 for j in range(len(resids)):
                     writer.writerow([resids[j], leaflet_type,
-                                     "%.3f" % coords[j][0],
-                                     "%.3f" % coords[j][1],
-                                     "%.3f" % coords[j][2],
-                                     "%.3f" % raw_values[j]])
+                                    "%.3f" % coords[j][0],
+                                    "%.3f" % coords[j][1],
+                                    "%.3f" % coords[j][2],
+                                    "%.3f" % directions[j][0],
+                                    "%.3f" % directions[j][1],
+                                    "%.3f" % directions[j][2],
+                                    "%.3f" % normals[j][0],
+                                    "%.3f" % normals[j][1],
+                                    "%.3f" % normals[j][2],
+                                    "%.3f" % raw_values[j]])
 
         output += "%s raw values saved to '%s'\n" % (self.fullname.capitalize(),
-                                                     csv_file)
+                                                    csv_file)
         return output
 
 

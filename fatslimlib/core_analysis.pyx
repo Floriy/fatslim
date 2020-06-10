@@ -60,6 +60,12 @@ DEF THICKNESS_MIN_COS_DX = 0.98480775301 # Cos 10 deg
 DEF THICKNESS_MIN_COS_NORMAL = 0.98480775301 # Cos 10 deg
 DEF THICKNESS_DEBUG_BEADID = 160
 
+## Order parameter ##
+DEF ORDER_DEFAULT_MAIN_AXIS_XX = 0
+DEF ORDER_DEFAULT_MAIN_AXIS_YY = 0
+DEF ORDER_DEFAULT_MAIN_AXIS_ZZ = 1
+## Order parameter ##
+
 DEF OUTPUT_RESOLUTION_DEFAULT = 600
 DEF OUTPUT_DPI_DEFAULT = 96
 
@@ -630,6 +636,20 @@ cdef real apl_from_neighborhoods(real_point *coords_2d,
 
     return area
 
+## Order parameter ##
+cdef real order_param(rvec main_axis, real[::1] lipid_direction) nogil:
+    cdef real costheta
+    
+    cdef rvec lipid_direction_vec
+    lipid_direction_vec[XX] = lipid_direction[XX]
+    lipid_direction_vec[YY] = lipid_direction[YY]
+    lipid_direction_vec[ZZ] = lipid_direction[ZZ]
+    
+    rvec_normalize(lipid_direction_vec)
+    costheta = rvec_dprod(main_axis, lipid_direction_vec)
+    return 1.5*costheta*costheta - 0.5
+## Order parameter ##
+
 ########################################################################################################################
 #
 # Classes
@@ -710,6 +730,17 @@ cdef class Aggregate(object):
         self.thickness_cutoff = NOTSET
         self.thickness_min = NOTSET
         self.thickness_max = NOTSET
+
+        ## Order parameter ##
+        self.order_values = np.empty(size)
+        self.order_by_types = []
+        for val in self.beadids_by_type:
+            self.order_by_types.append(np.empty(len(val)))
+        self.order_min = NOTSET
+        self.order_max = NOTSET
+        self.order_avg = NOTSET
+        #self.order_axis = NOTSET
+        ## Order parameter ##
 
 
         with nogil:
@@ -1136,6 +1167,65 @@ cdef class Aggregate(object):
                     self.apl_by_types[tid][i] = self.apl_values[beadid]
                     self.area_by_types[tid] += self.apl_values[beadid]
 
+    ## Order parameter ##
+    cdef void compute_order(self, rvec main_axis, bint force=False) nogil except *:
+        cdef fsl_int i, j, tid, beadid
+        cdef fsl_int size = self.fast_size()
+        cdef real *tmp_order
+        cdef real[:, ::1] self_coords = self.coords
+        cdef real[:, ::1] self_directions = self.directions
+        cdef real[:] self_order = self.order_values
+        cdef real order_avg, order_min, order_max
+
+
+        # Do nothing if the order is already computed and the force flag is not set.
+        if self.order_avg != NOTSET and not force:
+            return
+        
+        # Allocate memory for temp arrays
+        tmp_order = <real *> malloc(size * sizeof(real))
+        if tmp_order == NULL:
+            abort()
+        
+        #Normalize the main-axis
+        rvec_normalize(main_axis)
+        
+        # Calculate raw order parameter per lipid
+        for i in prange(size, schedule="dynamic", num_threads=OPENMP_NUM_THREADS):
+            # Compute the order parameter
+            tmp_order[i] = order_param(main_axis, self_directions[i])
+        
+        # Computer average and store order parameter per lipid
+        order_avg = 0
+        for i in prange(size, schedule="dynamic", num_threads=OPENMP_NUM_THREADS):
+            self_order[i] = tmp_order[i]
+
+            order_avg += self_order[i]
+        order_avg /= size
+
+        # Find extrema
+        order_max = NOTSET
+        order_min = -NOTSET
+        for i in range(size):
+            if self.order_values[i] > order_max:
+                order_max = self.order_values[i]
+            if self.order_values[i] < order_min:
+                order_min = self.order_values[i]
+
+        # Free memory
+        free(tmp_order)
+
+        # Store results
+        self.order_avg = order_avg
+        self.order_max = order_max
+        self.order_min = order_min
+        with gil:
+            for tid, val in enumerate(self.beadids_by_type):
+                self.area_by_types[tid] = 0
+                for i in range(len(val)):
+                    beadid = val[i]
+                    self.order_by_types[tid][i] = self.order_values[beadid]
+    ## Order parameter ##
 
 
 
@@ -1354,6 +1444,30 @@ cdef class Membrane(object):
         # Compute average APL and store results
         self.apl = (self.leaflet1.apl_avg * l1_size + self.leaflet2.apl_avg * l2_size) / (l1_size + l2_size)
 
+    ## Order parameter ##
+    cdef void fast_compute_order(self, real main_axis_xx=ORDER_DEFAULT_MAIN_AXIS_XX,
+                                 real main_axis_yy=ORDER_DEFAULT_MAIN_AXIS_YY,
+                                 real main_axis_zz=ORDER_DEFAULT_MAIN_AXIS_ZZ,
+                                 bint force=False) nogil except*:
+        cdef rvec main_axis
+        #Set the main axis rvec
+        main_axis[0] = main_axis_xx
+        main_axis[1] = main_axis_yy
+        main_axis[2] = main_axis_zz
+
+        cdef fsl_int l1_size = self.leaflet1.fast_size()
+        cdef fsl_int l2_size = self.leaflet2.fast_size()
+
+        # Compute the order parameter for the leaflet 1
+        self.leaflet1.compute_order(main_axis, force)
+
+        # Compute the order parameter for the leaflet 2
+        self.leaflet2.compute_order(main_axis, force)
+
+        # Compute average order parameter and store results
+        self.order = (self.leaflet1.order_avg * l1_size + self.leaflet2.order_avg * l2_size) / (l1_size + l2_size)
+    ## Order parameter ##
+
     # Python API
     property beadids:
         def __get__(self):
@@ -1446,6 +1560,67 @@ cdef class Membrane(object):
                 l2_apl = np.asarray(self.leaflet2.apl_values)
 
         return self.apl, l1_apl, l2_apl
+
+    ## Order parameter ##
+    def get_order(self, real main_axis_xx=ORDER_DEFAULT_MAIN_AXIS_XX,
+                  real main_axis_yy=ORDER_DEFAULT_MAIN_AXIS_YY,
+                  real main_axis_zz=ORDER_DEFAULT_MAIN_AXIS_ZZ,
+                  bint by_type=True,
+                  bint only_average=True,
+                  bint force=False):
+        cdef fsl_int i, tid
+        cdef real order_val
+        cdef bytes resname
+
+        # First compute order parameter
+        with nogil:
+            self.fast_compute_order(main_axis_xx,
+                                    main_axis_yy,
+                                    main_axis_zz,
+                                    force)
+
+        # Then sort order parameter by restype
+        if by_type:
+            l1_order = {}
+            for tid, key in enumerate(self.leaflet1.lipid_types):
+                if only_average:
+                    l1_order[key] = (self.leaflet1.nlipids_by_type[key],
+                                fast_average(self.leaflet1.order_by_types[tid]),
+                                self.leaflet1.apl_by_types[tid].min(),
+                                self.leaflet1.apl_by_types[tid].max(),
+                                self.leaflet1.area_by_types[tid])
+                else:
+                    l1_order[key] = self.leaflet1.order_by_types[tid].copy()
+
+            l2_order = {}
+            for tid, key in enumerate(self.leaflet2.lipid_types):
+                if only_average:
+                    l2_order[key] = (self.leaflet2.nlipids_by_type[key],
+                                fast_average(self.leaflet2.order_by_types[tid]),
+                                self.leaflet2.order_by_types[tid].min(),
+                                self.leaflet2.order_by_types[tid].max(),
+                                self.leaflet2.area_by_types[tid])
+                else:
+                    l2_order[key] = self.leaflet2.order_by_types[tid].copy()
+
+
+        else:
+            if only_average:
+                l1_order = (self.leaflet1.order_avg,
+                        self.leaflet1.order_min,
+                        self.leaflet1.order_max)
+            else:
+                l1_order = np.asarray(self.leaflet1.order_values)
+
+            if only_average:
+                l2_order = (self.leaflet2.order_avg,
+                        self.leaflet2.order_min,
+                        self.leaflet2.order_max)
+            else:
+                l2_order = np.asarray(self.leaflet2.order_values)
+
+        return self.order, l1_order, l2_order
+    ## Order parameter ##
 
     def __getitem__(self, item):
         self_as_list = [self.leaflet1, self.leaflet2]
